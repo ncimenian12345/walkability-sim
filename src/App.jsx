@@ -5,7 +5,8 @@ import MetricsPanel from './components/MetricsPanel.jsx';
 import { buildGraph, attachBuildings } from './engine/graph.js';
 import { computeMetrics } from './engine/metrics.js';
 import { makeSnapper } from './engine/snap.js';
-import { translatePolygon, transformPolygon, rectangleAt } from './engine/geo.js';
+import { planRoute } from './engine/route.js';
+import { translatePolygon, transformPolygon, rectangleAt, polygonCentroid } from './engine/geo.js';
 import {
   EMPTY_SCENARIO, applyScenario, patchFeature, revertFeature, newBuilding, newStreet,
   describeChanges, changeCount, normalizeScenario,
@@ -28,7 +29,9 @@ export default function App() {
   const [townStatus, setTownStatus] = useState(null); // {loading, message, error}
   const [hist, setHist] = useState({ past: [], present: EMPTY_SCENARIO, future: [] });
   const [selected, setSelected] = useState(null);     // {kind: 'building'|'street', id}
-  const [tool, setTool] = useState('select');         // select | paint | draw | drop | path | delete
+  const [tool, setTool] = useState('select');         // select | paint | draw | drop | path | route | delete
+  const [routePts, setRoutePts] = useState([]);       // waypoints of the planned walking route
+  const [walk, setWalk] = useState(null);             // {active, withRoute, pos?, heading?, at}
   const [brushUse, setBrushUse] = useState('retail');
   const [dropSize, setDropSize] = useState({ w: 20, d: 14 });
   const [viewMode, setViewMode] = useState('uses');
@@ -48,6 +51,8 @@ export default function App() {
     setSelected(null);
     setCompareIds([]);
     setScenarioName('');
+    setRoutePts([]);
+    setWalk(null);
     if (t.properties?.source === 'openstreetmap') setLayers((l) => ({ ...l, satellite: true, opacity: Math.min(l.opacity, 0.8) }));
     if (fit && t.properties?.bbox) setCameraTarget({ bbox: t.properties.bbox, at: Date.now() });
   }, []);
@@ -154,6 +159,12 @@ export default function App() {
   const metrics = useMemo(() => (graph ? computeMetrics(graph, attachBuildings(graph, buildings, cacheFor(graph)), buildings) : null), [graph, buildings]);
   const baseMetrics = useMemo(() => (baseGraph ? computeMetrics(baseGraph, attachBuildings(baseGraph, baseBuildings, cacheFor(baseGraph)), baseBuildings) : null), [baseGraph, baseBuildings]);
   const snap = useMemo(() => makeSnapper(streets), [streets]);
+  const streetById = useMemo(() => new Map(streets.map((f) => [f.properties.id, f])), [streets]);
+
+  // Planned walking route on the current layout, and the same trip on today's layout for comparison.
+  const route = useMemo(() => planRoute(graph, streets, routePts, snap), [graph, streets, routePts, snap]);
+  const baseSnap = useMemo(() => (streets === baseStreets ? snap : makeSnapper(baseStreets)), [streets, baseStreets, snap]);
+  const baseRoute = useMemo(() => (graph === baseGraph ? route : planRoute(baseGraph, baseStreets, routePts, baseSnap)), [graph, baseGraph, baseStreets, routePts, route, baseSnap]);
 
   const deleted = useMemo(() => Object.entries(scenario.mods).filter(([, m]) => m.deleted).map(([id]) => baseById.get(id)).filter(Boolean), [scenario, baseById]);
   const changes = useMemo(() => describeChanges(scenario, baseById), [scenario, baseById]);
@@ -211,30 +222,49 @@ export default function App() {
 
   const chooseTool = useCallback((t) => { setTool(t); if (t !== 'select') setSelected(null); }, []);
 
+  // ---------------- route planning & walk mode ----------------
+  const addRoutePt = useCallback((p) => setRoutePts((pts) => [...pts, p]), []);
+  const popRoutePt = useCallback(() => setRoutePts((pts) => pts.slice(0, -1)), []);
+  const clearRoute = useCallback(() => setRoutePts([]), []);
+  /** Use a building as a route stop: its front door is taken as the nearest point on a street. */
+  const routeFromBuilding = useCallback((f) => {
+    if (f?.properties.kind !== 'building') return;
+    setRoutePts((pts) => [...pts, snap(polygonCentroid(f.geometry.coordinates), 80).point]);
+    chooseTool('route');
+  }, [snap, chooseTool]);
+  const startWalk = useCallback((withRoute) => {
+    if (withRoute && !route) return;
+    setSelected(null);
+    if (!withRoute && tool !== 'select') setTool('select');
+    setWalk({ active: true, withRoute, at: Date.now() });
+  }, [route, tool]);
+  const endWalk = useCallback(() => setWalk(null), []);
+
   // keyboard shortcuts
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.closest?.('input, select, textarea')) return;
+      if (walk?.active) return; // the walker owns the keyboard (WASD, Esc)
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
       if (mod && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
       if (mod || e.altKey) return;
       if (tool === 'select' && selected && (e.key === 'Delete' || e.key === 'Backspace')) { e.preventDefault(); remove(selected.kind, selected.id); return; }
       if (tool === 'select' && e.key === 'Escape') { setSelected(null); return; }
-      const keys = { v: 'select', p: 'paint', b: 'draw', d: 'drop', f: 'path', x: 'delete' };
+      const keys = { v: 'select', p: 'paint', b: 'draw', d: 'drop', f: 'path', r: 'route', x: 'delete' };
       if (keys[e.key.toLowerCase()] && !['draw', 'path'].includes(tool)) chooseTool(keys[e.key.toLowerCase()]);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [tool, selected, undo, redo, remove, chooseTool]);
+  }, [tool, selected, undo, redo, remove, chooseTool, walk]);
 
   // ---------------- scenarios ----------------
-  const loadScenario = useCallback((s) => { commit(() => normalizeScenario(s)); setSelected(null); setScenarioName(s.name); }, [commit]);
+  const loadScenario = useCallback((s) => { commit(() => normalizeScenario(s)); setSelected(null); setScenarioName(s.name); if (Array.isArray(s.route) && s.route.length >= 2) setRoutePts(s.route); }, [commit]);
   const saveScenario = useCallback(() => {
-    const s = scenarios.save(scenarioName.trim(), scenario, metrics.summary);
+    const s = scenarios.save(scenarioName.trim(), scenario, metrics.summary, routePts);
     setScenarioName(s.name);
     setCompareIds((ids) => [...ids, s.id]);
-  }, [scenarios, scenarioName, scenario, metrics]);
+  }, [scenarios, scenarioName, scenario, metrics, routePts]);
   const exportScenarios = useCallback(() => {
     const blob = new Blob([JSON.stringify({ town: town?.properties?.name, townKey, scenarios: scenarios.scenarios }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
@@ -263,12 +293,16 @@ export default function App() {
         onEdit={editFeature} onTransform={transform} onDuplicate={duplicate} onDelete={remove} onRevert={revert} onDeselect={() => setSelected(null)}
         changes={changes} onSelectChange={(c) => { if (!c.detail.includes('removed')) setSelected({ kind: c.kind, id: c.id }); }} onResetAll={resetAll}
         metrics={metrics} viewMode={viewMode} setViewMode={setViewMode} layers={layers} setLayers={setLayers}
+        routePts={routePts} route={route} baseRoute={baseRoute} onClearRoute={clearRoute} onPopRoutePt={popRoutePt} onRouteFromBuilding={routeFromBuilding}
+        walking={!!walk?.active} onWalk={startWalk} onEndWalk={endWalk}
       />
       <MapView
         town={town} buildings={buildings} streets={streets} deleted={deleted} metrics={metrics} viewMode={viewMode}
         selected={selected} onSelect={setSelected} tool={tool} brushUse={brushUse} dropSize={dropSize} snap={snap}
         onPaint={paint} onDelete={remove} onMove={move} onCreateBuilding={createBuilding} onDropBuilding={dropBuilding} onCreatePath={createPath}
         onExitTool={() => setTool('select')} layers={layers} cameraTarget={cameraTarget} apiRef={mapApi}
+        routePts={routePts} route={route} baseRoute={baseRoute} onAddRoutePt={addRoutePt} onRoutePop={popRoutePt} onRouteClear={clearRoute}
+        walk={walk} onWalkEnd={endWalk} streetById={streetById}
       />
       <MetricsPanel
         metrics={metrics} baseMetrics={baseMetrics} editCount={changeCount(scenario)}

@@ -80,7 +80,7 @@ export default function MetricsPanel({
             <li key={sc.id}>
               <label className="check"><input type="checkbox" checked={compareIds.includes(sc.id)} onChange={(e) => setCompareIds(e.target.checked ? [...compareIds, sc.id] : compareIds.filter((x) => x !== sc.id))} /></label>
               <input className="inline-name" value={sc.name} onChange={(e) => onRename(sc.id, e.target.value)} />
-              <span className="muted small">{changeCount(normalizeScenario(sc))} changes · score {sc.summary.avgScore}</span>
+              <span className="muted small">{changeCount(normalizeScenario(sc))} changes · score {sc.summary.avgScore}{sc.route ? ' · 🚶 route' : ''}</span>
               <button className="link" onClick={() => onLoad(sc)}>Load</button>
               <button className="link danger" onClick={() => onDelete(sc.id)}>✕</button>
             </li>

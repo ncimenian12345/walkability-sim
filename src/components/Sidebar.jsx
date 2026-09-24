@@ -11,6 +11,7 @@ const TOOLS = [
   { id: 'drop', icon: '▣', label: 'Drop building', key: 'D', hint: 'Click to place a building of the chosen use and size. It lines up with the nearest street.' },
   { id: 'draw', icon: '⬠', label: 'Draw building', key: 'B', hint: 'Click to add corners; click the first corner, double-click, or press Enter to finish. Backspace undoes a corner, Esc cancels.' },
   { id: 'path', icon: '〰', label: 'Add footpath', key: 'F', hint: 'Click to add points — they snap to streets (orange dot) so the path joins the walking network. Double-click or Enter to finish.' },
+  { id: 'route', icon: '⟿', label: 'Plan route', key: 'R', hint: 'Click a start and a destination — stops snap to the nearest street. Keep clicking to add stops. Backspace removes the last stop, Esc clears. Then walk it at street level.' },
   { id: 'delete', icon: '✕', label: 'Remove', key: 'X', hint: 'Click a building or street segment to remove it. Removed items show as red dashed outlines; undo or revert to bring them back.' },
 ];
 
@@ -23,6 +24,7 @@ export default function Sidebar(p) {
     tool, setTool, brushUse, setBrushUse, dropSize, setDropSize, canUndo, canRedo, onUndo, onRedo,
     selected, selectedResult, isChanged, onEdit, onTransform, onDuplicate, onDelete, onRevert, onDeselect,
     changes, onSelectChange, onResetAll, metrics, viewMode, setViewMode, layers, setLayers,
+    routePts, route, baseRoute, onClearRoute, onPopRoutePt, onRouteFromBuilding, walking, onWalk, onEndWalk,
   } = p;
   const [query, setQuery] = useState('');
   const [showChanges, setShowChanges] = useState(true);
@@ -84,7 +86,16 @@ export default function Sidebar(p) {
           </div>
         )}
         <p className="hint">{activeTool.hint}</p>
+        <div className="btn-row walk-row">
+          {walking
+            ? <button className="primary" onClick={onEndWalk}>✕ Exit walk mode</button>
+            : <button onClick={() => onWalk(false)} title="Drop to street level at the centre of the map and walk around with WASD / arrow keys">🚶 Walk around (street view)</button>}
+        </div>
       </section>
+
+      {(tool === 'route' || routePts.length > 0) && (
+        <RoutePanel routePts={routePts} route={route} baseRoute={baseRoute} onClear={onClearRoute} onPop={onPopRoutePt} onWalk={() => onWalk(true)} walking={walking} />
+      )}
 
       {selected?.properties.kind === 'building' && (
         <section className="selected">
@@ -112,6 +123,7 @@ export default function Sidebar(p) {
             <button onClick={() => onTransform(selected.properties.id, { scale: 1.1 })} title="Grow 10%">+ size</button>
           </div>
           <div className="btn-row">
+            <button onClick={() => onRouteFromBuilding(selected)} title="Add this building as a stop on the planned route">⟿ {routePts.length ? 'Route to here' : 'Route from here'}</button>
             <button onClick={() => onDuplicate(selected.properties.id)}>Duplicate</button>
             <button className="danger" onClick={() => onDelete('building', selected.properties.id)}>Remove</button>
             {isChanged && !selected.properties.added && <button onClick={() => onRevert(selected.properties.id)}>Revert</button>}
@@ -225,6 +237,54 @@ export default function Sidebar(p) {
         </ul>
       </section>
     </aside>
+  );
+}
+
+const fmtM = (m) => (m >= 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`);
+const HW_SHORT = { footway: 'footpath', path: 'path', pedestrian: 'pedestrian', living_street: 'living st.', residential: 'residential', service: 'service rd', unclassified: 'minor rd', tertiary: 'connector', secondary: 'main rd', primary: 'main rd', trunk: 'highway', cycleway: 'cycle path', steps: 'steps', track: 'track' };
+
+function RoutePanel({ routePts, route, baseRoute, onClear, onPop, onWalk, walking }) {
+  const changed = route && baseRoute && baseRoute !== route;
+  const dMin = changed ? route.minutes - baseRoute.minutes : 0;
+  const dM = changed ? route.length - baseRoute.length : 0;
+  return (
+    <section className="route-panel">
+      <div className="row-between">
+        <h2>Route <span className="pill muted">{routePts.length} stop{routePts.length === 1 ? '' : 's'}</span></h2>
+        <span>
+          {routePts.length > 0 && <button className="link" onClick={onPop} title="Remove last stop">↶</button>}
+          {routePts.length > 0 && <button className="link" onClick={onClear}>Clear</button>}
+        </span>
+      </div>
+      {routePts.length < 2 && <p className="small muted">{routePts.length === 0 ? 'Click the map to set a start point.' : 'Now click the destination.'} You can also select a building and choose “Route from/to here”.</p>}
+      {route && (
+        <>
+          {route.unreachable && <p className="hint err">Part of this trip has no walking connection — the red dashed leg is unreachable on the current network.</p>}
+          <div className="kpis route-kpis">
+            <div className="kpi">
+              <div className="kpi-value">{Math.round(route.minutes)}<span className="kpi-unit"> min</span></div>
+              <div className="kpi-label">walk{changed && Math.abs(dMin) >= 0.5 ? <span className={`delta ${dMin < 0 ? 'up' : 'down'}`}> {dMin > 0 ? '+' : ''}{Math.round(dMin)} vs. today</span> : null}</div>
+            </div>
+            <div className="kpi">
+              <div className="kpi-value">{fmtM(route.length)}</div>
+              <div className="kpi-label">distance{changed && Math.abs(dM) >= 5 ? <span className={`delta ${dM < 0 ? 'up' : 'down'}`}> {dM > 0 ? '+' : ''}{fmtM(Math.abs(dM)).replace(/^/, dM < 0 ? '−' : '')}</span> : null}</div>
+            </div>
+          </div>
+          {changed && Math.abs(dMin) >= 0.5 && <p className="small muted">Dashed white line on the map = the same trip on today's layout ({Math.round(baseRoute.minutes)} min, {fmtM(baseRoute.length)}).</p>}
+          {route.minutes - route.walkMinutes >= 1 && <p className="small muted">Includes ~{Math.round(route.minutes - route.walkMinutes)} min of “felt” time for busy roads or missing sidewalks.</p>}
+          <ul className="route-streets">
+            {route.streets.map((s, i) => (
+              <li key={i} className={s.added ? 'added' : ''}>
+                <span className="hud-name">{s.id === null ? 'off-street' : s.name || `Unnamed ${HW_SHORT[s.highway] || s.highway}`}</span>
+                <span className="muted small">{s.id === null ? '' : HW_SHORT[s.highway] || s.highway}{s.sidewalk === 'no' || s.sidewalk === 'none' ? ' · no sidewalk' : ''}{s.added ? ' · new' : ''}</span>
+                <span className="count">{fmtM(s.meters)}</span>
+              </li>
+            ))}
+          </ul>
+          <button className="primary wide" onClick={onWalk} disabled={walking}>🚶 Walk this route at street level</button>
+        </>
+      )}
+    </section>
   );
 }
 

@@ -3,14 +3,25 @@ import maplibregl from 'maplibre-gl';
 import { minutesColor, scoreColor, useColor, NEUTRAL_BUILDING } from '../colors.js';
 import { USES, CATEGORIES } from '../data/uses.js';
 import { translatePolygon, rectangleAt } from '../engine/geo.js';
+import { createWalker } from './walker.js';
+import WalkHUD from './WalkHUD.jsx';
 
 const BASE_STYLE = 'https://tiles.openfreemap.org/styles/liberty';
 const SATELLITE_TILES = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 const LEVEL_HEIGHT = 3.3; // metres per storey
 const FC = (features = []) => ({ type: 'FeatureCollection', features });
 const fmtMin = (m) => (m === Infinity ? '—' : `${Math.round(m)} min`);
+const ROUTE_LABELS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 
-const CURSORS = { select: '', paint: 'cell', draw: 'crosshair', drop: 'copy', path: 'crosshair', delete: 'not-allowed' };
+const CURSORS = { select: '', paint: 'cell', draw: 'crosshair', drop: 'copy', path: 'crosshair', route: 'crosshair', delete: 'not-allowed' };
+
+// Sky for the street-level view (only visible when the horizon is in frame).
+const SKY = { 'sky-color': '#7fb8e6', 'horizon-color': '#dbe9f4', 'fog-color': '#e6eef5', 'fog-ground-blend': 0.6, 'horizon-fog-blend': 0.8, 'sky-horizon-blend': 0.7, 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 14, 0, 17, 1] };
+
+function routeFeature(route, extra = {}) {
+  if (!route) return FC();
+  return FC([{ type: 'Feature', properties: { unreachable: !!route.unreachable, ...extra }, geometry: { type: 'LineString', coordinates: route.coords } }]);
+}
 
 /** Colour + height per building for the current view mode. */
 function styledBuildings(buildings, metrics, viewMode) {
@@ -31,7 +42,7 @@ function metresPerPixel(map) {
 }
 
 export default function MapView(props) {
-  const { town, buildings, streets, deleted, metrics, viewMode, selected, layers, cameraTarget, apiRef, tool } = props;
+  const { town, buildings, streets, deleted, metrics, viewMode, selected, layers, cameraTarget, apiRef, tool, routePts, route, baseRoute, walk, streetById, snap } = props;
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -39,6 +50,8 @@ export default function MapView(props) {
   live.current = props; // handlers always see the latest props without re-binding
   const draft = useRef({ pts: [], cursor: null });
   const drag = useRef(null);
+  const walkerRef = useRef(null);
+  const [walkState, setWalkState] = useState(null);
 
   // ---------- create the map once ----------
   useEffect(() => {
@@ -105,6 +118,19 @@ export default function MapView(props) {
       map.addLayer({ id: 'draft-line', type: 'line', source: 'draft', filter: ['!=', ['geometry-type'], 'Point'], paint: { 'line-color': '#00e5ff', 'line-width': 3, 'line-dasharray': [2, 1] } });
       map.addLayer({ id: 'draft-pts', type: 'circle', source: 'draft', filter: ['==', ['geometry-type'], 'Point'], paint: { 'circle-radius': ['case', ['==', ['get', 'cursor'], true], 6, 4], 'circle-color': ['case', ['==', ['get', 'snapped'], true], '#ff9100', '#00e5ff'], 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } });
 
+      // planned walking route: today's route as a dashed ghost, the scenario's route on top
+      map.addSource('route-base', { type: 'geojson', data: FC() });
+      map.addLayer({ id: 'sim-route-base', type: 'line', source: 'route-base', paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 3, 18, 5, 22, 10], 'line-dasharray': [1.2, 1.6], 'line-opacity': 0.85 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      map.addSource('route', { type: 'geojson', data: FC() });
+      map.addLayer({ id: 'sim-route-casing', type: 'line', source: 'route', paint: { 'line-color': '#000000', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 8, 18, 12, 22, 22], 'line-opacity': 0.35 }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      map.addLayer({ id: 'sim-route', type: 'line', source: 'route', filter: ['!=', ['get', 'unreachable'], true], paint: { 'line-color': '#ff4081', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 5, 18, 8, 22, 16] }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      map.addLayer({ id: 'sim-route-gap', type: 'line', source: 'route', filter: ['==', ['get', 'unreachable'], true], paint: { 'line-color': '#ff1744', 'line-width': ['interpolate', ['linear'], ['zoom'], 14, 5, 18, 8, 22, 16], 'line-dasharray': [1, 1.5] }, layout: { 'line-cap': 'round', 'line-join': 'round' } });
+      map.addSource('route-pts', { type: 'geojson', data: FC() });
+      map.addLayer({ id: 'sim-route-pts', type: 'circle', source: 'route-pts', paint: { 'circle-radius': 11, 'circle-color': '#ff4081', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
+      map.addLayer({ id: 'sim-route-pt-labels', type: 'symbol', source: 'route-pts', layout: { 'text-field': ['get', 'label'], 'text-size': 12, 'text-font': ['Noto Sans Bold'], 'text-allow-overlap': true }, paint: { 'text-color': '#fff' } });
+
+      try { map.setSky(SKY); } catch (e) { console.warn('sky not supported', e); }
+
       setReady(true);
     });
 
@@ -162,7 +188,7 @@ export default function MapView(props) {
     };
 
     map.on('mousemove', (e) => {
-      if (!map.getSource('buildings')) return;
+      if (!map.getSource('buildings') || walkerRef.current?.active) return;
       const { tool, snap, metrics, viewMode } = live.current;
       // dragging a building
       if (drag.current) {
@@ -180,10 +206,11 @@ export default function MapView(props) {
         map.getSource('drag').setData(FC([{ type: 'Feature', properties: { h: d.h }, geometry: { type: 'Polygon', coordinates: translatePolygon(d.coords, d.dLon, d.dLat) } }]));
         return;
       }
-      if (tool === 'draw' || tool === 'path' || tool === 'drop') {
+      if (tool === 'draw' || tool === 'path' || tool === 'drop' || tool === 'route') {
         setHover(null); popup.remove();
         const p = [e.lngLat.lng, e.lngLat.lat];
         if (tool === 'path') draft.current.cursor = snap(p, tolM(14));
+        else if (tool === 'route') draft.current.cursor = snap(p, tolM(24));
         else if (tool === 'drop') draft.current.cursor = { point: p, bearing: snap(p, 80).bearing };
         else draft.current.cursor = { point: p, snapped: false };
         renderDraft();
@@ -210,6 +237,7 @@ export default function MapView(props) {
 
     map.on('mousedown', (e) => {
       const { tool, selected, buildings } = live.current;
+      if (walkerRef.current?.active) return;
       if (tool !== 'select' || !selected || selected.kind !== 'building') return;
       const f = pickBuilding(e.point);
       if (!f || f.properties.id !== selected.id) return;
@@ -235,9 +263,10 @@ export default function MapView(props) {
     window.addEventListener('mouseup', endDrag);
 
     map.on('click', (e) => {
-      if (map.__justDragged) return;
-      const { tool, onSelect, onPaint, onDelete, onDropBuilding, snap } = live.current;
+      if (map.__justDragged || walkerRef.current?.active) return;
+      const { tool, onSelect, onPaint, onDelete, onDropBuilding, onAddRoutePt, snap } = live.current;
       const p = [e.lngLat.lng, e.lngLat.lat];
+      if (tool === 'route') { onAddRoutePt(snap(p, tolM(24)).point); return; }
       if (tool === 'draw') {
         const pts = draft.current.pts;
         if (pts.length >= 3) {
@@ -269,9 +298,15 @@ export default function MapView(props) {
     });
 
     const onKey = (e) => {
-      const { tool, onExitTool } = live.current;
-      if (!['draw', 'path', 'drop'].includes(tool)) return;
+      const { tool, onExitTool, routePts, onRoutePop, onRouteClear } = live.current;
       if (e.target.closest?.('input, select, textarea')) return;
+      if (walkerRef.current?.active) { if (e.key === 'Escape') live.current.onWalkEnd(); return; }
+      if (tool === 'route') {
+        if (e.key === 'Escape') { if (routePts.length) onRouteClear(); else onExitTool(); }
+        else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); onRoutePop(); }
+        return;
+      }
+      if (!['draw', 'path', 'drop'].includes(tool)) return;
       if (e.key === 'Enter') { e.preventDefault(); finishDraft(); }
       else if (e.key === 'Escape') { if (draft.current.pts.length) clearDraft(); else onExitTool(); }
       else if (e.key === 'Backspace' || e.key === 'Delete') { e.preventDefault(); draft.current.pts.pop(); renderDraft(); }
@@ -302,6 +337,32 @@ export default function MapView(props) {
   useEffect(() => { if (ready) mapRef.current.getSource('streets').setData(FC(streets)); }, [ready, streets]);
   useEffect(() => { if (ready) mapRef.current.getSource('deleted').setData(FC(deleted)); }, [ready, deleted]);
 
+  // planned route + waypoints
+  useEffect(() => {
+    if (!ready) return;
+    const map = mapRef.current;
+    map.getSource('route').setData(routeFeature(route));
+    // only show today's route when it actually differs from the scenario's
+    const differs = baseRoute && route && (Math.abs(baseRoute.length - route.length) > 1 || baseRoute.coords.length !== route.coords.length);
+    map.getSource('route-base').setData(differs ? routeFeature(baseRoute) : FC());
+    map.getSource('route-pts').setData(FC((routePts || []).map((p, i) => ({ type: 'Feature', properties: { label: ROUTE_LABELS[i % 26] }, geometry: { type: 'Point', coordinates: p } }))));
+    if (walkerRef.current?.active) walkerRef.current.setRoute(route);
+  }, [ready, route, baseRoute, routePts]);
+
+  // street-level walk mode
+  useEffect(() => {
+    if (!ready) return;
+    const map = mapRef.current;
+    if (walk?.active) {
+      if (!walkerRef.current) walkerRef.current = createWalker(map, { onUpdate: setWalkState });
+      map.__sim.clearDraft();
+      walkerRef.current.start({ route: walk.withRoute ? live.current.route : null, pos: walk.pos, heading: walk.heading });
+    } else if (walkerRef.current?.active) {
+      walkerRef.current.stop();
+      setWalkState(null);
+    }
+  }, [ready, walk]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // selection highlight (only touch the previous and new feature)
   const prevSel = useRef(null);
   useEffect(() => {
@@ -318,10 +379,10 @@ export default function MapView(props) {
 
   // tool change: reset any half-drawn shape, toggle double-click zoom
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || walkerRef.current?.active) return;
     const map = mapRef.current;
     map.__sim.clearDraft();
-    if (tool === 'draw' || tool === 'path') map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
+    if (tool === 'draw' || tool === 'path' || tool === 'route') map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();
     map.getCanvas().style.cursor = CURSORS[tool] || '';
   }, [ready, tool]);
 
@@ -342,13 +403,13 @@ export default function MapView(props) {
   }, [ready, layers]);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || walkerRef.current?.active) return;
     mapRef.current.easeTo({ pitch: layers.tilt ? 50 : 0, duration: 600 });
-  }, [ready, layers.tilt]);
+  }, [ready, layers.tilt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // camera requests from the app (e.g. after loading a town)
   useEffect(() => {
-    if (!ready || !cameraTarget) return;
+    if (!ready || !cameraTarget || walkerRef.current?.active) return;
     const map = mapRef.current;
     if (cameraTarget.bbox) {
       const [w, s, e, n] = cameraTarget.bbox;
@@ -358,5 +419,15 @@ export default function MapView(props) {
     }
   }, [ready, cameraTarget]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return <div ref={containerRef} className="map" />;
+  return (
+    <div className={`map ${walkState ? 'walking' : ''}`}>
+      <div ref={containerRef} className="map-canvas" />
+      {walkState && (
+        <WalkHUD
+          state={walkState} route={walk?.withRoute ? route : null} baseRoute={baseRoute}
+          streetById={streetById} snap={snap} buildings={buildings} walker={walkerRef.current} onExit={props.onWalkEnd}
+        />
+      )}
+    </div>
+  );
 }

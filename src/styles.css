@@ -16,7 +16,8 @@ html, body, #root { height: 100%; margin: 0; }
 body { font-family: var(--font); background: var(--bg); color: var(--text); font-size: 14px; }
 
 .app { display: grid; grid-template-columns: 300px 1fr 340px; height: 100%; }
-.map { position: relative; height: 100%; }
+.map { position: relative; height: 100%; overflow: hidden; }
+.map-canvas { position: absolute; inset: 0; }
 .loading { display: grid; place-items: center; height: 100%; color: var(--muted); }
 
 .panel { background: var(--panel); overflow-y: auto; padding: 14px 16px; border-right: 1px solid var(--border); }
@@ -143,3 +144,43 @@ form.save-row { margin-bottom: 6px; }
 
 a.link { color: var(--accent); text-decoration: none; white-space: nowrap; }
 a.link:hover { text-decoration: underline; }
+
+/* ---- route planner ---- */
+.walk-row { margin: 6px 0 0; }
+.walk-row button { flex: 1; }
+.route-kpis { margin-bottom: 8px; }
+.kpi-unit { font-size: 14px; font-weight: 500; color: var(--muted); }
+.route-streets { list-style: none; margin: 0 0 10px; padding: 0; max-height: 200px; overflow-y: auto; font-size: 12.5px; }
+.route-streets li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: baseline; padding: 3px 0; border-bottom: 1px solid var(--border); }
+.route-streets li.added .hud-name { color: #00e5ff; }
+.hud-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- walk mode HUD ---- */
+.map.walking .maplibregl-ctrl-top-right, .map.walking .maplibregl-ctrl-bottom-right { display: none; }
+.hud { position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 12px; font-size: 13px; }
+.hud > * { pointer-events: none; }
+.hud-top, .hud-bottom { display: flex; gap: 10px; align-items: flex-start; }
+.hud-bottom { flex-direction: column; align-items: stretch; }
+.hud-card { pointer-events: auto; background: #14171bd9; backdrop-filter: blur(6px); border: 1px solid #ffffff22; border-radius: 10px; padding: 10px 12px; box-shadow: 0 4px 16px #0006; }
+.hud-where { min-width: 220px; max-width: 340px; }
+.hud-nearby { min-width: 220px; max-width: 320px; }
+.hud-nearby ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.hud-nearby li { display: flex; align-items: center; gap: 7px; padding: 2px 0; font-size: 12.5px; }
+.hud-nearby li .muted { margin-left: auto; font-size: 11.5px; white-space: nowrap; }
+.hud-eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.hud-title { font-size: 17px; font-weight: 700; margin-top: 2px; }
+.hud-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.hud-exit { pointer-events: auto; margin-left: auto; background: #14171bd9; border: 1px solid #ffffff33; border-radius: 8px; padding: 8px 12px; font-weight: 600; }
+.hud-exit:hover { border-color: #fff; }
+.hud-route { align-self: center; width: min(720px, 100%); }
+.hud-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+.hud-controls .seg { display: inline-flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.hud-controls .seg button { border: 0; border-radius: 0; padding: 5px 9px; font-size: 12px; }
+.hud-controls .seg button + button { border-left: 1px solid var(--border); }
+.hud-seek { width: 100%; margin: 8px 0 0; accent-color: #ff4081; }
+.hud-keys { text-align: center; pointer-events: none; margin-top: 8px; text-shadow: 0 1px 2px #000; }
+kbd { display: inline-block; background: #0009; border: 1px solid #ffffff33; border-radius: 4px; padding: 0 5px; font-family: inherit; font-size: 11px; line-height: 16px; color: var(--text); }
+@media (max-width: 1000px) {
+  .hud-top { flex-wrap: wrap; }
+  .hud-nearby { display: none; }
+}

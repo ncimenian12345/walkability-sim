@@ -59,7 +59,8 @@ export function buildGraph(streets) {
       if (i === 1) first = a;
       last = b;
       if (a === b) continue;
-      edges.push({ a, b, w: fastDist(line[i - 1], line[i], cosLat) * penalty, fid, alive: true });
+      const len = fastDist(line[i - 1], line[i], cosLat);
+      edges.push({ a, b, w: len * penalty, len, fid, alive: true });
     }
     if (f.properties.added && first >= 0) looseEnds.push([first, fid], [last, fid]);
   });
@@ -78,16 +79,17 @@ export function buildGraph(streets) {
     const { e, t } = best;
     e.alive = false;
     const link = bestD; // short connector from the end to the street itself
-    edges.push({ a: e.a, b: n, w: e.w * t + link, fid: e.fid, alive: true });
-    edges.push({ a: n, b: e.b, w: e.w * (1 - t) + link, fid: e.fid, alive: true });
+    edges.push({ a: e.a, b: n, w: e.w * t + link, len: e.len * t + link, fid: e.fid, alive: true });
+    edges.push({ a: n, b: e.b, w: e.w * (1 - t) + link, len: e.len * (1 - t) + link, fid: e.fid, alive: true });
     nodeOwners[n].add(e.fid);
   }
 
+  // adjacency entries are [neighbour, weighted cost, street index, raw length in m]
   const adj = coords.map(() => []);
   for (const e of edges) {
     if (!e.alive) continue;
-    adj[e.a].push([e.b, e.w]);
-    adj[e.b].push([e.a, e.w]);
+    adj[e.a].push([e.b, e.w, e.fid, e.len]);
+    adj[e.b].push([e.a, e.w, e.fid, e.len]);
   }
 
   // Spatial hash of connected nodes for nearest-node queries

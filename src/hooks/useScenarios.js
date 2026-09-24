@@ -7,8 +7,9 @@ function load() {
 }
 
 /**
- * Saved scenarios live in localStorage: {id, name, savedAt, townKey, scenario, summary}.
- * `scenario` is the {mods, added} diff; `summary` is the metric snapshot at save time.
+ * Saved scenarios live in localStorage: {id, name, savedAt, townKey, scenario, summary, route?}.
+ * `scenario` is the {mods, added} diff; `summary` is the metric snapshot at save time;
+ * `route` is the planned walkthrough's waypoints ([lon, lat][]), if one was set.
  * Only scenarios for the town currently loaded are listed.
  */
 export function useScenarios(townKey) {
@@ -20,8 +21,8 @@ export function useScenarios(townKey) {
 
   const scenarios = useMemo(() => all.filter((s) => (s.townKey || 'generated') === townKey), [all, townKey]);
 
-  const save = useCallback((name, scenario, summary) => {
-    const s = { id: `sc_${Date.now().toString(36)}`, name: name || `Scenario ${scenarios.length + 1}`, savedAt: new Date().toISOString(), townKey, scenario, summary };
+  const save = useCallback((name, scenario, summary, route = null) => {
+    const s = { id: `sc_${Date.now().toString(36)}`, name: name || `Scenario ${scenarios.length + 1}`, savedAt: new Date().toISOString(), townKey, scenario, summary, ...(route?.length >= 2 ? { route } : {}) };
     setAll((prev) => [...prev, s]);
     return s;
   }, [scenarios.length, townKey]);

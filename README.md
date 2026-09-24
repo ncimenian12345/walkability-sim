@@ -53,8 +53,10 @@ before testing scenarios.
 | Edit or remove a street | Select it to change its type or sidewalk, or use **Remove** (X). |
 | Remove anything | **Remove** tool, or select it and press Delete. Removed items stay as red dashed outlines. |
 | Undo / redo | ⌘Z / ⇧⌘Z, or the arrows next to *Tools*. The **Changes** list shows every edit; ↺ reverts one. |
+| Plan a walking route | **Plan route** (R): click a start and a destination (stops snap to streets; keep clicking to add stops), or select a building and use **Route from/to here**. The panel shows minutes, distance and every street the walk uses — and, once you've edited the town, the same trip on *today's* layout as a dashed white line with the time saved. |
+| Walk it at street level | **Walk this route at street level**, or **Walk around (street view)** to drop in at the map centre. Space plays/pauses along the route (1–8×), WASD / arrows walk freely, drag to look around, scroll for eye height (street / second floor / low drone). The HUD shows the street you're on, its sidewalk, and everything within 150 m. Esc returns to the map. |
 | Heatmaps | **View → Walk score** or **Minutes to…** a category. |
-| Save & compare | Name the layout and **Save**; tick saved scenarios to compare. Export/Import JSON to share. |
+| Save & compare | Name the layout and **Save**; tick saved scenarios to compare. A planned route is saved with the scenario, so a walkthrough can be reloaded. Export/Import JSON to share. |
 | Satellite / opacity / tilt | **Layers**. Lower building opacity to check footprints against the imagery. |
 
 ## What the numbers mean
@@ -102,7 +104,10 @@ scripts/generate-town.mjs procedural stand-in → town.json
 src/data/uses.js          use catalog + categories + weights
 src/data/generateTown.js  procedural town generator
 src/engine/               graph, Dijkstra, metrics (framework-free, tested)
+src/engine/route.js       point-to-point walking routes (same comfort-weighted costs as the metrics)
 src/components/MapView    MapLibre 3D map
+src/components/walker.js  street-level camera: follows a route or free-walks with WASD
+src/components/WalkHUD    overlay while walking: street, sidewalk, nearby amenities, playback
 src/components/Sidebar    view modes, editing, legend, layers
 src/components/MetricsPanel  KPIs, coverage bars, scenarios & comparison
 ```
