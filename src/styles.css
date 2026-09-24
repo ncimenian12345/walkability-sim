@@ -140,3 +140,6 @@ input[type='range'] { width: 100%; accent-color: var(--accent); }
 .changes .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pp-hint { margin-top: 3px; color: var(--accent); font-size: 11px; }
 form.save-row { margin-bottom: 6px; }
+
+a.link { color: var(--accent); text-decoration: none; white-space: nowrap; }
+a.link:hover { text-decoration: underline; }

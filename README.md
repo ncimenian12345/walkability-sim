@@ -1,6 +1,6 @@
 # Walkability Sim
 
-**Live (password protected):** hosted on Vercel — see *Deploying* below.
+**Live (access code required):** hosted on Render — see *Deploying* below.
 
 A Google-Earth-style 3D town simulator for testing walkability and sustainability.
 Every building has a *use* (housing, grocery, café, school, park…). Swap uses, add or
@@ -92,6 +92,7 @@ npm test
 ## Project layout
 
 ```
+server.mjs                production server + access-code page (Render)
 public/data/town.json     fallback town data (stand-in, or a fetch-town extract)
 src/data/osm.js           OpenStreetMap download + conversion
 src/data/structures.js    FEMA USA Structures footprints + merge
@@ -111,14 +112,24 @@ satellite imagery © Esri; building footprints: FEMA USA Structures (public doma
 
 ## Deploying
 
-The site is hosted on **Vercel** (free Hobby plan) and every push to `main` redeploys it.
-It's password protected by `middleware.js`, which puts an HTTP Basic Auth prompt in front of
-every page and file:
+The site runs on **Render** as a small Node web service (`server.mjs`, no extra packages)
+defined in `render.yaml`. Every push to `main` redeploys it.
 
-* **Set the password:** Vercel → project → *Settings → Environment Variables* →
-  `SITE_PASSWORD` (and optionally `SITE_USER`), then redeploy. Without `SITE_PASSWORD` the site
-  stays locked rather than going public.
-* **Change the password:** edit the variable and redeploy; browsers will be asked again.
+**Access code.** The server shows its own access-code page and sends nothing else — no app
+HTML, scripts or data — until the right code is entered. A signed, HttpOnly cookie then keeps
+that device signed in for 30 days (*Sign out* in the top-left clears it). After 5 wrong codes
+in 15 minutes a visitor is locked out for 5 minutes.
+
+* **Set / change the code:** Render → the service → *Environment* → `SITE_PASSWORD` → save
+  (Render redeploys). Changing it signs everyone out. With no `SITE_PASSWORD` the site answers
+  503 rather than going public.
+* **First-time setup:** Render → *New → Blueprint* → choose this repo → enter `SITE_PASSWORD`
+  when asked → *Apply*.
+* **Free plan:** the service sleeps after 15 minutes without visitors and takes about a
+  minute to wake. Change `plan: free` to `starter` in `render.yaml` for always-on.
+
+To try the production server locally: `SITE_PASSWORD=yourcode npm run preview`, then open
+http://localhost:4173. (`npm run dev` has no access gate.)
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the tests and a production build on every
 push, so a broken commit shows up as a red ✗ on GitHub.

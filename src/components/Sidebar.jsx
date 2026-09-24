@@ -34,7 +34,10 @@ export default function Sidebar(p) {
   return (
     <aside className="panel panel-left">
       <header className="panel-header">
-        <h1>{town.properties?.name || 'Town'}</h1>
+        <div className="row-between">
+          <h1>{town.properties?.name || 'Town'}</h1>
+          {import.meta.env.PROD && <a className="link small" href="/logout" title="Sign out of this device">Sign out</a>}
+        </div>
         <p className="muted small">{buildingCount.toLocaleString()} buildings · {generated ? 'stylized stand-in (not real)' : town.properties?.footprints ? 'FEMA footprints + OpenStreetMap' : 'OpenStreetMap data'}</p>
       </header>
 

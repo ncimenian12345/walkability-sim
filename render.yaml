@@ -1,0 +1,17 @@
+# Render Blueprint — New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: walkability-sim
+    runtime: node
+    plan: free            # sleeps after 15 min idle (~1 min to wake); switch to starter for always-on
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: node server.mjs
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: SITE_PASSWORD      # the access code — Render asks for it when you create the service
+        sync: false
+      - key: SESSION_SECRET     # signs the "stay signed in" cookie
+        generateValue: true
+      - key: NODE_VERSION
+        value: "22"
