@@ -1,6 +1,6 @@
 # Walkability Sim
 
-**Live:** https://ncimenian12345.github.io/walkability-sim/
+**Live (password protected):** hosted on Vercel — see *Deploying* below.
 
 A Google-Earth-style 3D town simulator for testing walkability and sustainability.
 Every building has a *use* (housing, grocery, café, school, park…). Swap uses, add or
@@ -111,6 +111,17 @@ satellite imagery © Esri; building footprints: FEMA USA Structures (public doma
 
 ## Deploying
 
-Every push to `main` runs the tests, builds the site and publishes it to GitHub Pages
-(`.github/workflows/deploy.yml`). Scenarios and the downloaded town are stored in each
-visitor's own browser; use **Export JSON** / **Import JSON** to share a scenario.
+The site is hosted on **Vercel** (free Hobby plan) and every push to `main` redeploys it.
+It's password protected by `middleware.js`, which puts an HTTP Basic Auth prompt in front of
+every page and file:
+
+* **Set the password:** Vercel → project → *Settings → Environment Variables* →
+  `SITE_PASSWORD` (and optionally `SITE_USER`), then redeploy. Without `SITE_PASSWORD` the site
+  stays locked rather than going public.
+* **Change the password:** edit the variable and redeploy; browsers will be asked again.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the tests and a production build on every
+push, so a broken commit shows up as a red ✗ on GitHub.
+
+Scenarios and the downloaded town are stored in each visitor's own browser; use
+**Export JSON** / **Import JSON** to share a scenario.
